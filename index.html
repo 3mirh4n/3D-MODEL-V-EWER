@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal 3D Studio Pro</title>
+    <style>
+        :root { --accent: #a855f7; --bg: #050505; --glass: rgba(10, 10, 10, 0.9); }
+        body { margin: 0; background: var(--bg); color: white; font-family: 'Inter', sans-serif; overflow: hidden; }
+
+        #ui-panel { 
+            position: absolute; top: 20px; left: 20px; z-index: 100; 
+            background: var(--glass); backdrop-filter: blur(20px);
+            padding: 24px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.05);
+            width: 260px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .section-title { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1.5px; color: #4b5563; margin: 15px 0 10px 0; }
+        .toggle-group { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.85rem; }
+        
+        .upload-btn {
+            background: linear-gradient(135deg, #a855f7, #6366f1); color: white; padding: 12px; 
+            border-radius: 12px; cursor: pointer; display: block; text-align: center; 
+            font-weight: 700; border: none; transition: 0.3s; margin-bottom: 10px;
+        }
+        .upload-btn:hover { transform: scale(1.02); box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
+
+        #loading { position: absolute; bottom: 20px; right: 20px; display: none; color: var(--accent); font-size: 0.8rem; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h2 style="margin:0 0 5px 0; font-size: 1.2rem; font-weight: 800;">STUDIO PRO</h2>
+        <p style="font-size: 0.7rem; color: #666; margin-bottom: 15px;">GLB • OBJ • STL Support</p>
+        
+        <label class="upload-btn">
+            DOSYA YÜKLE
+            <input type="file" id="fileInput" accept=".glb, .gltf, .obj, .stl" style="display:none">
+        </label>
+
+        <div class="section-title">GÖRSEL AYARLAR</div>
+        <div class="toggle-group"><span>Bloom Efekti</span><input type="checkbox" id="bloomToggle" checked></div>
+        <div class="toggle-group"><span>Zemin Izgarası</span><input type="checkbox" id="gridToggle" checked></div>
+        <div class="toggle-group"><span>İskelet Modu</span><input type="checkbox" id="wireframeToggle"></div>
+
+        <div class="section-title">HAREKET</div>
+        <div class="toggle-group"><span>Otomatik Dönüş</span><input type="checkbox" id="rotateToggle"></div>
+    </div>
+
+    <div id="loading">Model Yükleniyor...</div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        let scene, camera, renderer, controls, composer, mixer, clock, grid;
+        let currentModel = null;
+
+        function init() {
+            clock = new THREE.Clock();
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050505);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(10, 5, 10);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            document.body.appendChild(renderer.domElement);
+
+            grid = new THREE.GridHelper(50, 50, 0x3b82f6, 0x111827);
+            grid.position.y = -2;
+            scene.add(grid);
+
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.4, 0.85);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+            const pLight = new THREE.PointLight(0xa855f7, 100);
+            pLight.position.set(10, 10, 10);
+            scene.add(pLight);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            // UI Listeners
+            document.getElementById('bloomToggle').onchange = (e) => bloomPass.strength = e.target.checked ? 0.4 : 0;
+            document.getElementById('gridToggle').onchange = (e) => grid.visible = e.target.checked;
+            document.getElementById('rotateToggle').onchange = (e) => controls.autoRotate = e.target.checked;
+            
+            animate();
+        }
+
+        // --- MODEL İŞLEME MERKEZİ ---
+        const handleLoadedModel = (object, animations = []) => {
+            if (currentModel) scene.remove(currentModel);
+            currentModel = object;
+            scene.add(currentModel);
+
+            // Animasyonlar (Sadece GLB/GLTF için geçerli)
+            mixer = null;
+            if (animations.length > 0) {
+                mixer = new THREE.AnimationMixer(currentModel);
+                animations.forEach(clip => mixer.clipAction(clip).play());
+            }
+
+            // Boyutlandırma ve Merkeze Alma
+            const box = new THREE.Box3().setFromObject(currentModel);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            const scale = 7 / Math.max(size.x, size.y, size.z);
+            
+            currentModel.scale.set(scale, scale, scale);
+            currentModel.position.sub(center.multiplyScalar(scale));
+            currentModel.position.y += (size.y * scale) / 2 - 2;
+
+            document.getElementById('loading').style.display = 'none';
+        };
+
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const url = URL.createObjectURL(file);
+            const ext = file.name.split('.').pop().toLowerCase();
+            document.getElementById('loading').style.display = 'block';
+
+            if (ext === 'glb' || ext === 'gltf') {
+                new GLTFLoader().load(url, (g) => handleLoadedModel(g.scene, g.animations));
+            } 
+            else if (ext === 'obj') {
+                new OBJLoader().load(url, (obj) => {
+                    // OBJ dosyaları genelde renksiz gelir, varsayılan bir materyal atayalım
+                    obj.traverse(c => { if(c.isMesh) c.material = new THREE.MeshStandardMaterial({color: 0x8b5cf6, metalness: 0.5, roughness: 0.2}) });
+                    handleLoadedModel(obj);
+                });
+            } 
+            else if (ext === 'stl') {
+                new STLLoader().load(url, (geo) => {
+                    const mat = new THREE.MeshStandardMaterial({ color: 0x6366f1, metalness: 0.6, roughness: 0.1 });
+                    handleLoadedModel(new THREE.Mesh(geo, mat));
+                });
+            }
+        });
+
+        document.getElementById('wireframeToggle').onchange = (e) => {
+            if (!currentModel) return;
+            currentModel.traverse(c => { if (c.isMesh) c.material.wireframe = e.target.checked; });
+        };
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (mixer) mixer.update(clock.getDelta());
+            controls.update();
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        init();
+    </script>
+</body>
+</html>
