@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal 3D Studio Pro</title>
+    <title>Universal 3D Studio Pro - Texture Edition</title>
     <style>
         :root { --accent: #a855f7; --bg: #050505; --glass: rgba(10, 10, 10, 0.9); }
         body { margin: 0; background: var(--bg); color: white; font-family: 'Inter', sans-serif; overflow: hidden; }
@@ -32,7 +32,7 @@
 
     <div id="ui-panel">
         <h2 style="margin:0 0 5px 0; font-size: 1.2rem; font-weight: 800;">STUDIO PRO</h2>
-        <p style="font-size: 0.7rem; color: #666; margin-bottom: 15px;">GLB • OBJ • STL Support</p>
+        <p style="font-size: 0.7rem; color: #666; margin-bottom: 15px;">Texture & Color Optimized</p>
         
         <label class="upload-btn">
             DOSYA YÜKLE
@@ -48,7 +48,7 @@
         <div class="toggle-group"><span>Otomatik Dönüş</span><input type="checkbox" id="rotateToggle"></div>
     </div>
 
-    <div id="loading">Model Yükleniyor...</div>
+    <div id="loading">İşleniyor...</div>
 
     <script type="importmap">
         {
@@ -83,7 +83,12 @@
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
+            
+            // --- RENK DOĞRULUĞU AYARLARI ---
+            renderer.outputColorSpace = THREE.SRGBColorSpace; // Renklerin doğru görünmesini sağlar
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+            
             document.body.appendChild(renderer.domElement);
 
             grid = new THREE.GridHelper(50, 50, 0x3b82f6, 0x111827);
@@ -96,15 +101,14 @@
             composer.addPass(renderScene);
             composer.addPass(bloomPass);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-            const pLight = new THREE.PointLight(0xa855f7, 100);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+            const pLight = new THREE.PointLight(0xffffff, 100);
             pLight.position.set(10, 10, 10);
             scene.add(pLight);
 
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
-            // UI Listeners
             document.getElementById('bloomToggle').onchange = (e) => bloomPass.strength = e.target.checked ? 0.4 : 0;
             document.getElementById('gridToggle').onchange = (e) => grid.visible = e.target.checked;
             document.getElementById('rotateToggle').onchange = (e) => controls.autoRotate = e.target.checked;
@@ -112,20 +116,32 @@
             animate();
         }
 
-        // --- MODEL İŞLEME MERKEZİ ---
         const handleLoadedModel = (object, animations = []) => {
             if (currentModel) scene.remove(currentModel);
             currentModel = object;
+
+            // --- DOKU VE MATERYAL OPTİMİZASYONU ---
+            currentModel.traverse(child => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    
+                    // Eğer modelin dokuları varsa onları SRGB uzayına al
+                    if (child.material.map) {
+                        child.material.map.colorSpace = THREE.SRGBColorSpace;
+                        child.material.map.needsUpdate = true;
+                    }
+                }
+            });
+
             scene.add(currentModel);
 
-            // Animasyonlar (Sadece GLB/GLTF için geçerli)
             mixer = null;
             if (animations.length > 0) {
                 mixer = new THREE.AnimationMixer(currentModel);
                 animations.forEach(clip => mixer.clipAction(clip).play());
             }
 
-            // Boyutlandırma ve Merkeze Alma
             const box = new THREE.Box3().setFromObject(currentModel);
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
@@ -150,8 +166,11 @@
             } 
             else if (ext === 'obj') {
                 new OBJLoader().load(url, (obj) => {
-                    // OBJ dosyaları genelde renksiz gelir, varsayılan bir materyal atayalım
-                    obj.traverse(c => { if(c.isMesh) c.material = new THREE.MeshStandardMaterial({color: 0x8b5cf6, metalness: 0.5, roughness: 0.2}) });
+                    obj.traverse(c => { 
+                        if(c.isMesh && !c.material.map) {
+                            c.material = new THREE.MeshStandardMaterial({color: 0x8b5cf6, metalness: 0.5, roughness: 0.2});
+                        }
+                    });
                     handleLoadedModel(obj);
                 });
             } 
